@@ -1,9 +1,23 @@
 // Arduino Mega 2560
 
-#include <LiquidCrystal_I2C.h>
-//Header file for LCD from https://www.arduino.cc/en/Reference/LiquidCrystal
-#include <Keypad.h>  //Header file for Keypad from https://github.com/Chris--A/Keypad
+#include <LiquidCrystal_I2C.h>//Header file for LCD from https://www.arduino.cc/en/Reference/LiquidCrystal
 
+#include <Keypad.h>  //Header file for Keypad from https://github.com/Chris--A/Keypad
+#include <Stepper.h>
+#include <Adafruit_VL53L1X.h>
+#include <CFRotaryEncoder.h> 
+
+// DEFINES
+// Define stepper motor connections:
+#define dirPin 22
+#define stepPin 24
+#define zStopUpper 26
+#define zStopLower 28
+// VL53X
+#define IRQ_PIN 2
+#define XSHUT_PIN 3
+const int stepsPerRevolution = 200;  // change this to fit the number of steps per revolution
+const int rpm  = 60
 const byte ROWS = 5;  // Four rows
 const byte COLS = 4;  // Three columns
 
@@ -17,11 +31,23 @@ const long L200 = 385;
 const long L175 = 302;
 const long L70 = 140;
 
-// Define stepper motor connections:
-#define dirPin 22
-#define stepPin 24
-#define zStopUpper 26
-#define zStopLower 28
+// Rotary encoder pins
+const int ROT_PIN_OUTPUT_A = 39;
+const int ROT_PIN_OUTPUT_B = 41;
+const int ROT_PIN_PUSH_BUT = 43;
+
+// Menu system
+
+
+
+// initialize the rotary encoder
+CFRotaryEncoder rotaryEncoder(ROT_PIN_OUTPUT_A, ROT_PIN_OUTPUT_B, ROT_PIN_PUSH_BUT);   
+
+// initialize the stepper library on pins 8 through 11:
+Stepper zStepper(stepsPerRevolution, 8,9,10,11);
+
+// Init the VL53L1X
+Adafruit_VL53L1X vl53 = lidar(XSHUT_PIN, IRQ_PIN);
 
 // Define the Keymap
 char keys[ROWS][COLS] = {
@@ -60,46 +86,72 @@ boolean blink = false;
 boolean ledPin_state;
 
 void setup() {
-  Serial.begin(9600);
+  // set the speed at 60 rpm:
+  zStepper.setSpeed(60);  
+  Serial.begin(115200);
+  
+  while (!Serial) delay(10);
+  
   lcd.init();  // initialize the lcd
   lcd.backlight();
-  digitalWrite(dirPin, HIGH);
-  lcd.autoscroll();
+  lc.leftToRight();
+  lcd.noAutoscroll();
   lcd.print("Initializing...");
   ledPin_state = digitalRead(LED_BUILTIN);
   kpd.addEventListener(keypadEvent);
 
   delay(5000);  //Wait for display to show info
+  clearScreen()  //Then clean it
+   // Define callbacks.
+   rotaryEncoder.setAfterRotaryChangeValueCallback(rotaryAfterChangeValueCallback);
+   rotaryEncoder.setPushButtonOnPressCallback(rotaryOnPressCallback);
+  
+    
+  Wire.begin();
+  say("Initializing Lidar");
+  if (! lidar.begin(0x29, &Wire)) {
+    say("Error on init of VL sensor: ");
+    say(lidar.vl_status);
+    while (1)       delay(10);
+  }
+  say("Lidar sensor OK!");
+  say("Sensor ID: 0x");
+  say(lidar.sensorID());
 
-  lcd.clear();  //Then clean it
+  //check to ensure lidar is working
+  if (! lidar.startRanging()) {
+    say("Lidar Ranging failed:");
+    say(lidar.vl_status);
+    while (1)
+      delay(10);
+  }
+  say("Ranging started");
+  // turn off ranging and only run it when the focus function is called
+  lidar.stopRanging(); 
+  // Valid timing budgets: 15, 20, 33, 50, 100, 200 and 500ms!
+  lidar.setTimingBudget(50);
+  Serial.print(F("Timing budget (ms): "));
+  Serial.println(lidar.getTimingBudget());
+  delay(30);
+  clearScreen();   
+  mainMenu();
+  
+  
 }
 
 void loop() {
-
-  key = kpd.getKey();
-  //storing pressed key value in a char
-
-  if (key != NO_KEY) {
-    Serial.print(key);
-    //DetectButtons();
-  }
-  // DetectButtons();
-
-  // if (result == true){
-  //   CalculateResult();
-  // }
-
-  //  DisplayResult();
+ rotaryEncoder.loop();
 }
 
 void say(String message){
-  
   lcd.println(message);
+}
 
-}  
+void clearScreen(){
+  lcd.clear();
+}
 
 void keypadEvent(KeypadEvent key) {
-
   switch (kpd.getState()) {
     case PRESSED:
       if (key == 'S') {
@@ -128,10 +180,27 @@ void keypadEvent(KeypadEvent key) {
   }
 }
 
-
-
 void setFocalLen(long focalLen) {
   currentLensFL = focalLen;
+}
+
+void setFocus(){
+  // if (lidar > currentFL) lower the z
+  // else raise the z to currentFL  
+  if (lidar.startRanging() && lidar.dataReady()){
+    while(true){
+      if(lidar.distance > currenLensFL){
+        stepCW(1);
+      }
+      else{
+        stepCCW(1);
+      }
+    }
+  }
+  else{
+    //throw an  error message to the display
+    say(
+  }
 }
 
 void setStepMode() {
@@ -143,241 +212,38 @@ void setStepMode() {
 void zeroZ() {
   lcd.println("This function will set the z height zero position");
   // lower z to lower limit
-  setZ(0);
-  setZ(currentLensFL);
+  #read the  pin in a loop and exec 
+  digitalWrite(dirPin, HIGH);
+  while (digitalRead(zStopLower) == LOW){
+    zStepper.step(stepsPerRevolution);  
+  }  
 }
 
 void setZ(int zHeight) {
   lcd.println("This function will set the z height");
-  int steps = stepsPerMM * zHeight;
-  //  int stepsToMove = getSteps(zHeight);
-  if (zCurrent > zHeight) {
-    stepCCW(steps);
-  } else {
-    stepCW(steps);
-  }
 }
 
 void stepCW(int steps) {
-  // Set the spinning direction clockwise:
-  digitalWrite(dirPin, HIGH);
-  // Spin the stepper motor 5 revolutions fast:
   for (int i = 0; i < steps; i++) {
-    // These four lines result in 1 step:
-    digitalWrite(stepPin, HIGH);
+    zStepper.step(1);
   }
 }
 
 void stepCCW(int steps) {
-  // Set the spinning direction counterclockwise:
-  digitalWrite(dirPin, LOW);
   for (int i = 0; i < steps; i++) {
-    // These four lines result in 1 step:
-    digitalWrite(stepPin, HIGH);
-  }
+  zStepper.step(-1);  }
 }
 
-void DetectButtons() {
-  lcd.clear();  //Then clean it
-
-  if (key == '+')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button Enter");
-    lcd.println("Enter Button Pressed");
-    setZ(Number);
-    result = false;
-  }
-
-  if (key == 'L')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button Left");
-    lcd.println("Left Button Pressed");
-    result = false;
-  }
-
-  if (key == 'R')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button Right");
-    lcd.println("Right Button Pressed");
-    result = false;
-  }
-
-  if (key == '-')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button Esc");
-    lcd.println("Esc Button Pressed");
-    result = false;
-  }
-
-  if (key == 'F')
-  //F2 Sets the
-  {
-    Serial.println("Button F2");
-    lcd.println("Setting the FL for the lense");
-    if (Number == L175 | Number == L200 | Number == L70) {
-      setFocalLen(Number);
-    }
-    result = false;
-  }
-
-  if (key == 'S')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button F1");
-    lcd.println("Setting the micro step mode");
-    if (Number == 8 | Number == 16) {
-      setStepMode();
-    }
-
-    result = false;
-  }
-
-  if (key == 'U')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button Up");
-    lcd.println("Up Button Pressed");
-    result = false;
-  }
-
-  if (key == 'D')
-  //If cancel Button is pressed
-  {
-    Serial.println("Button Dn");
-    lcd.println("Down Button Pressed");
-    result = false;
-  }
-  if (key == '*')  //If cancel Button is pressed
-  {
-    Serial.println("Button *");
-    lcd.println("* Button Pressed");
-    result = false;
-  }
-
-  if (key == '1')  //If Button 1 is pressed
-  {
-    Serial.println("Button 1");
-    if (Number == 0)
-      Number = 1;
-    else
-      Number = (Number * 10) + 1;  //Pressed twice
-  }
-
-  if (key == '4') {
-    Serial.println("Button 4");
-    if (Number == 0)
-
-      Number = 4;
-    else
-      Number = (Number * 10) + 4;  //Pressed twice
-  }
-
-
-  if (key == '7') {
-    Serial.println("Button 7");
-    if (Number == 0)
-      Number = 7;
-    else
-      Number = (Number * 10) + 7;  //Pressed twice
-  }
-
-
-  if (key == '0') {
-    Serial.println("Button 0");  //Button 0 is Pressed
-    if (Number == 0)
-      Number = 0;
-
-    else
-      Number = (Number * 10) + 0;  //Pressed twice
-  }
-
-  if (key == '2')  //Button 2 is Pressed
-  {
-    Serial.println("Button 2");
-    if (Number == 0) {
-      Number = 2;
-    } else {
-      Number = (Number * 10) + 2;
-    }
-  }
-
-  if (key == '5') {
-    Serial.println("Button 5");
-    if (Number == 0) {
-      Number = 5;
-    } else {
-      Number = (Number * 10) + 5;
-    }
-  }
-
-  if (key == '8') {
-    Serial.println("Button 8");
-    if (Number == 0) {
-      Number = 8;
-    } else {
-      Number = (Number * 10) + 8;  //Pressed twice
-    }
-  }
-
-
-  if (key == '#') {
-    Serial.println("Button #");
-    lcd.println("# Button Pressed");
-    result = true;
-  }
-
-  if (key == '3') {
-    Serial.println("Button 3");
-
-    if (Number == 0) {
-      Number = 3;
-    } else {
-      Number = (Number * 10) + 3;
-    }
-  }
-
-  if (key == '6') {
-    Serial.println("Button 6");
-    if (Number == 0) {
-      Number = 6;
-    } else {
-      Number = (Number * 10) + 6;  //Pressed twice
-    }
-  }
-
-  if (key == '9')
-
-  {
-    Serial.println("Button 9");
-    if (Number == 0) {
-      Number = 9;
-    } else {
-      Number = (Number * 10) + 9;  //Pressed twice
-    }
-  }
+void rotaryAfterChangeValueCallback() {
+  // 1. check which screen we are on
+  // 2. if a menu screen 
+  
+  //if(rotaryEncoder.getValue());
 }
 
-
-
-// void CalculateResult() {
-
-//   if (action == '+')
-//     Number = Num1 + Num2;
-
-//   if (action == '-')
-//     Number = Num1 - Num2;
-
-//   if (action == '*')
-//     Number = Num1 * Num2;
-
-//   if (action == '/')
-
-//     Number = Num1 / Num2;
-// }
+void rotaryOnPressCallback() {
+    Serial.println("Button was pressed.");
+}
 
 // void DisplayResult() {
 //   lcd.setCursor(0,
